@@ -1,0 +1,12 @@
+[package]
+name = "rs-hyperloglog"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A HyperLogLog cardinality estimator implemented from scratch in dependency-free Rust."
+repository = "https://github.com/kasapdev/rs-hyperloglog"
+readme = "README.md"
+keywords = ["hyperloglog", "cardinality", "algorithms", "estimation"]
+categories = ["algorithms", "data-structures"]
+
+[dependencies]
