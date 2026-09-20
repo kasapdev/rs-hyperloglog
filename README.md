@@ -53,6 +53,27 @@ a.merge(&b).unwrap();
 println!("union estimate: {:.0}", a.estimate()); // ~1000
 ```
 
+Other helpers: `HyperLogLog::default()` builds a `p = 14` sketch, `is_empty()`
+tells whether anything was inserted, `clear()` resets a sketch so it can be
+reused across time windows without reallocating, and `standard_error()`
+reports the expected relative error (`1.04 / sqrt(m)`) so you can put error
+bars on an estimate:
+
+```rust
+use rs_hyperloglog::HyperLogLog;
+
+let mut hll = HyperLogLog::default(); // p = 14
+for i in 0..50_000 {
+    hll.insert(&i);
+}
+let n = hll.estimate();
+let margin = n * hll.standard_error();
+println!("~{n:.0} distinct (+/- {margin:.0} at one standard error)");
+
+hll.clear();
+assert!(hll.is_empty());
+```
+
 ## How it works
 
 HyperLogLog keeps `m = 2^p` small registers (one byte each here) instead of
