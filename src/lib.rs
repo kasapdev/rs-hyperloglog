@@ -146,6 +146,61 @@ impl HyperLogLog {
         self.m
     }
 
+    /// Returns the expected relative standard error of [`estimate`](Self::estimate)
+    /// for this precision, `1.04 / sqrt(m)` with `m = 2^p` registers.
+    ///
+    /// About 68% of estimates fall within one standard error of the true
+    /// cardinality and about 95% within two, once enough items have been
+    /// inserted for the asymptotic formula to apply.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rs_hyperloglog::HyperLogLog;
+    ///
+    /// let hll = HyperLogLog::new(14).unwrap();
+    /// assert!((hll.standard_error() - 0.008125).abs() < 1e-9); // 1.04 / 128
+    /// ```
+    pub fn standard_error(&self) -> f64 {
+        1.04 / (self.m as f64).sqrt()
+    }
+
+    /// Returns `true` if no item has been inserted (every register is zero).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rs_hyperloglog::HyperLogLog;
+    ///
+    /// let mut hll = HyperLogLog::new(10).unwrap();
+    /// assert!(hll.is_empty());
+    /// hll.insert("x");
+    /// assert!(!hll.is_empty());
+    /// ```
+    pub fn is_empty(&self) -> bool {
+        self.registers.iter().all(|&r| r == 0)
+    }
+
+    /// Resets the estimator to its just-constructed state, keeping the
+    /// precision and the allocated registers. Useful for reusing one sketch
+    /// across time windows without reallocating.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rs_hyperloglog::HyperLogLog;
+    ///
+    /// let mut hll = HyperLogLog::new(10).unwrap();
+    /// hll.insert("x");
+    /// hll.clear();
+    /// assert!(hll.is_empty());
+    /// assert_eq!(hll.estimate(), 0.0);
+    /// assert_eq!(hll.precision(), 10);
+    /// ```
+    pub fn clear(&mut self) {
+        self.registers.fill(0);
+    }
+
     /// Hashes `item` and folds it into the estimator.
     ///
     /// Uses [`std::collections::hash_map::DefaultHasher`] (SipHash), which
@@ -291,6 +346,15 @@ impl HyperLogLog {
 
 /// The bias-correction constant `alpha_m` from the original HyperLogLog
 /// paper (Flajolet et al.), as a function of the number of registers `m`.
+impl Default for HyperLogLog {
+    /// Creates an estimator with precision 14: 16,384 registers (16 KiB) and
+    /// a standard error of about 0.81%, the usual default for cardinality
+    /// sketches.
+    fn default() -> Self {
+        Self::new(14).expect("precision 14 is within MIN_PRECISION..=MAX_PRECISION")
+    }
+}
+
 fn alpha_m(m: usize) -> f64 {
     match m {
         16 => 0.673,
@@ -422,5 +486,52 @@ mod tests {
              (relative standard error {relative_standard_error}, \
              tolerance +/-{tolerance} at {STANDARD_ERRORS_ALLOWED} standard errors)"
         );
+    }
+
+    #[test]
+    fn standard_error_matches_the_formula_and_shrinks_with_precision() {
+        let hll = HyperLogLog::new(14).unwrap();
+        assert!((hll.standard_error() - 1.04 / 128.0).abs() < 1e-12);
+        let low = HyperLogLog::new(8).unwrap().standard_error();
+        let high = HyperLogLog::new(16).unwrap().standard_error();
+        assert!(high < low, "more registers must mean a smaller error");
+    }
+
+    #[test]
+    fn is_empty_reflects_whether_anything_was_inserted() {
+        let mut hll = HyperLogLog::new(10).unwrap();
+        assert!(hll.is_empty());
+        hll.insert(&1u32);
+        assert!(!hll.is_empty());
+    }
+
+    #[test]
+    fn clear_resets_to_empty_and_stays_usable() {
+        let mut hll = HyperLogLog::new(12).unwrap();
+        for i in 0..5_000u32 {
+            hll.insert(&i);
+        }
+        assert!(hll.estimate() > 1_000.0);
+
+        hll.clear();
+        assert!(hll.is_empty());
+        assert_eq!(hll.estimate(), 0.0);
+        assert_eq!(hll.precision(), 12);
+        assert_eq!(hll.num_registers(), 4_096);
+
+        // Reusable: a fresh batch is estimated within a few standard errors.
+        for i in 0..2_000u32 {
+            hll.insert(&i);
+        }
+        let error = (hll.estimate() - 2_000.0).abs() / 2_000.0;
+        assert!(error < 4.0 * hll.standard_error(), "error {error}");
+    }
+
+    #[test]
+    fn default_uses_precision_14() {
+        let hll = HyperLogLog::default();
+        assert_eq!(hll.precision(), 14);
+        assert_eq!(hll.num_registers(), 16_384);
+        assert!(hll.is_empty());
     }
 }
